@@ -1,0 +1,64 @@
+name: run-mosaicr-frozen-cec2022
+on:
+  push:
+    paths:
+      - 'algorithms/MOSAIC_R.hpp'
+      - 'benchmark/mosaicr_cec22.cpp'
+      - '.github/workflows/run-mosaicr.yml'
+  workflow_dispatch:
+jobs:
+  mosaicr:
+    strategy:
+      fail-fast: false
+      matrix:
+        dimension: [10,20]
+        function: [1,2,3,4,5,6,7,8,9,10,11,12]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned CEC-2022 evaluator
+        run: |
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external_src
+          git -C external_src checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+          cp external_src/cec22_test_func.cpp benchmark/
+          rm -rf benchmark/input_data
+          cp -r external_src/input_data_22 benchmark/input_data
+      - name: Compile frozen MOSAIC-R v1
+        run: g++ -O3 -std=c++17 benchmark/mosaicr_cec22.cpp -o benchmark/mosaicr_cec22
+      - name: Run 30 matched-seed runs
+        env:
+          DIM: ${{ matrix.dimension }}
+          FUNC: ${{ matrix.function }}
+        run: |
+          cd benchmark
+          if [ "$DIM" = "10" ]; then BUDGET=200000; else BUDGET=1000000; fi
+          BASE_SEED=$((2026220000 + DIM*10000 + FUNC*100))
+          mkdir -p campaign
+          echo "algorithm,dimension,function,run,seed,error,nfe" > campaign/results.csv
+          ./mosaicr_cec22 "$DIM" "$FUNC" 30 "$BASE_SEED" "$BUDGET" | tee campaign/stdout.txt
+          grep '^RESULT,' campaign/stdout.txt | sed 's/^RESULT,/MOSAIC-R,/' >> campaign/results.csv
+          python3 - <<'PY'
+          import csv,math
+          rows=list(csv.DictReader(open('campaign/results.csv')))
+          assert len(rows)==30
+          for r in rows:
+              assert int(r['nfe'])==(200000 if int(r['dimension'])==10 else 1000000)
+              assert math.isfinite(float(r['error'])) and float(r['error'])>=-1e-8
+          PY
+          {
+            echo algorithm=MOSAIC-R-v1
+            echo frozen=true
+            echo dimension=$DIM
+            echo function=$FUNC
+            echo budget=$BUDGET
+            echo runs=30
+            echo base_seed=$BASE_SEED
+            echo cec22_source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9
+            sha256sum mosaicr_cec22.cpp ../algorithms/MOSAIC_R.hpp cec22_test_func.cpp mosaicr_cec22
+          } > campaign/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mosaicr-D${{ matrix.dimension }}-F${{ matrix.function }}
+          path: benchmark/campaign
+          retention-days: 90
