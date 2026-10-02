@@ -38,7 +38,7 @@ jobs:
           s=p.read_text()
 
           s=s.replace('const int Benchmark = 17;\n#include "cec17_test_func.cpp"',
-                      'const int Benchmark = 22;\n#include "cec22_test_func.cpp"')
+                      'const int Benchmark = 22;\n#include <iomanip>\n#include "cec22_test_func.cpp"')
           s=s.replace("cec17_test_func(xopt, tempF, GNVars, 1, func_num);",
                       "cec22_test_func(xopt, tempF, GNVars, 1, func_num);")
           s=s.replace("cec17_test_func(HostVector, tempF, GNVars, 1, func_num);",
