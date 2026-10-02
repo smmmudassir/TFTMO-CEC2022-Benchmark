@@ -1,0 +1,60 @@
+name: run-lsrtde-cec2022
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/run-lsrtde.yml'
+
+jobs:
+  lsrtde:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned L-SRTDE source
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external/L-SRTDE
+          git -C external/L-SRTDE checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+      - name: Switch author's code to documented CEC-2022 mode
+        working-directory: external/L-SRTDE
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("L-SRTDE.cpp")
+          s=p.read_text()
+          s=s.replace("const int Benchmark = 17;", "const int Benchmark = 22;")
+          s=s.replace('//#include "cec22_test_func.cpp"\n#include "cec17_test_func.cpp"', '#include "cec22_test_func.cpp"\n//#include "cec17_test_func.cpp"')
+          s=s.replace("const int ResTsize1 = 29;", "const int ResTsize1 = 12;")
+          s=s.replace("bool TimeComplexity = true;", "bool TimeComplexity = false;")
+          s=s.replace('sprintf(FileName, "input_data/shift_data_%d.txt",func_num);\n    //sprintf(FileName, "input_data_22/shift_data_%d.txt",func_num);',
+                      '//sprintf(FileName, "input_data/shift_data_%d.txt",func_num);\n    sprintf(FileName, "input_data_22/shift_data_%d.txt",func_num);')
+          s=s.replace("cec17_test_func(xopt, tempF, GNVars, 1, func_num);\n    //cec22_test_func(xopt, tempF, GNVars, 1, func_num);",
+                      "//cec17_test_func(xopt, tempF, GNVars, 1, func_num);\n    cec22_test_func(xopt, tempF, GNVars, 1, func_num);")
+          s=s.replace("cec17_test_func(HostVector, tempF, GNVars, 1, func_num);\n    //cec22_test_func(HostVector, tempF, GNVars, 1, func_num);",
+                      "//cec17_test_func(HostVector, tempF, GNVars, 1, func_num);\n    cec22_test_func(HostVector, tempF, GNVars, 1, func_num);")
+          p.write_text(s)
+          PY
+          rm -rf input_data
+          cp -r input_data_22 input_data
+          grep -nE 'Benchmark|cec22_test_func|TotalNRuns|MaxFEval = 200000|MaxFEval = 1000000|GNVars = 10|GNVars = 20' L-SRTDE.cpp | head -80
+      - name: Compile
+        working-directory: external/L-SRTDE
+        run: g++ -O3 -std=c++17 L-SRTDE.cpp -o lsrtde_cec2022
+      - name: Run full author's CEC-2022 campaign
+        working-directory: external/L-SRTDE
+        run: |
+          mkdir -p campaign_output
+          ./lsrtde_cec2022 | tee campaign_output/stdout.txt
+          cp -f Results*.txt campaign_output/ 2>/dev/null || true
+          cp -rf Results campaign_output/Results 2>/dev/null || true
+          find . -maxdepth 1 -type f -name 'L-SRTDE*' -exec cp -f {} campaign_output/ \; || true
+          echo "source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9" > campaign_output/provenance.txt
+          sha256sum L-SRTDE.cpp cec22_test_func.cpp lsrtde_cec2022 >> campaign_output/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lsrtde-cec2022-full
+          path: external/L-SRTDE/campaign_output
+          retention-days: 90
