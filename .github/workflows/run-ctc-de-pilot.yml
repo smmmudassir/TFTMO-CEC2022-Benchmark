@@ -1,0 +1,80 @@
+name: ctc-de-pilot-cec2022
+
+on:
+  push:
+    branches: [ctc-de-development]
+    paths:
+      - 'algorithms/CTC_DE.py'
+      - 'benchmark/run_ctc_de.py'
+      - '.github/workflows/run-ctc-de-pilot.yml'
+  workflow_dispatch:
+
+jobs:
+  pilot:
+    strategy:
+      fail-fast: false
+      matrix:
+        dimension: [10,20]
+        function: [1,2,3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip numpy pandas
+
+      - name: Fetch pinned CEC-2022 evaluator/data
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external-cec22
+          git -C external-cec22 checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+          cp external-cec22/cec22_test_func.cpp benchmark/cec22_test_func.cpp
+          rm -rf input_data
+          cp -r external-cec22/input_data_22 input_data
+
+      - name: Build evaluator bridge
+        run: g++ -O3 -std=c++17 -shared -fPIC benchmark/cec22_bridge.cpp -o benchmark/libcec22.so
+
+      - name: Run matched-seed pilot
+        env:
+          DIM: ${{ matrix.dimension }}
+          FUNC: ${{ matrix.function }}
+        run: |
+          set -euxo pipefail
+          mkdir -p campaign
+          if [ "$DIM" = "10" ]; then BUDGET=200000; else BUDGET=1000000; fi
+          BASE_SEED=$((2026220000 + DIM*10000 + FUNC*100))
+          python3 benchmark/run_ctc_de.py             --lib benchmark/libcec22.so             --dim "$DIM" --func "$FUNC" --runs 5             --base-seed "$BASE_SEED" --budget "$BUDGET"             --variant full --out campaign/results.csv | tee campaign/stdout.txt
+
+          python3 - <<'PY'
+          import pandas as pd, math, os
+          d=pd.read_csv("campaign/results.csv")
+          assert len(d)==5
+          assert d["seed"].nunique()==5
+          assert d["error"].apply(math.isfinite).all()
+          budget=200000 if int(os.environ["DIM"])==10 else 1000000
+          assert (d["nfe"]==budget).all()
+          print("PILOT_BLOCK_OK",os.environ["DIM"],os.environ["FUNC"])
+          PY
+
+          {
+            echo "algorithm=CTC-DE-development"
+            echo "variant=full"
+            echo "dimension=$DIM"
+            echo "function=$FUNC"
+            echo "budget=$BUDGET"
+            echo "runs=5"
+            echo "base_seed=$BASE_SEED"
+            echo "cec22_source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9"
+            sha256sum algorithms/CTC_DE.py benchmark/run_ctc_de.py benchmark/cec22_bridge.cpp benchmark/cec22_test_func.cpp benchmark/libcec22.so
+          } > campaign/provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctc-de-pilot-D${{ matrix.dimension }}-F${{ matrix.function }}
+          path: campaign
+          retention-days: 90
