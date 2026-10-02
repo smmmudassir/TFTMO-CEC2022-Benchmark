@@ -1,0 +1,143 @@
+name: validate-lshade101-cec2022
+
+on:
+  push:
+    paths:
+      - '.github/workflows/validate-lshade.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned corrected L-SHADE and CEC-2022 evaluator
+        run: |
+          set -euxo pipefail
+          mkdir -p external
+          curl -L --fail -o external/LSHADE1.0.1_CEC2014.zip \
+            https://raw.githubusercontent.com/ryojitanabe/ryojitanabe.github.io/master/code/LSHADE1.0.1_CEC2014.zip
+          test "$(sha256sum external/LSHADE1.0.1_CEC2014.zip | awk '{print $1}')" = "3d1211f29e19eed87b2ca0f9eb9ec5aa99fc79bf41d32a5590f6e341d08be9f0"
+          unzip -q external/LSHADE1.0.1_CEC2014.zip -d external/LSHADE
+
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external/CEC22
+          git -C external/CEC22 checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+
+          cp external/CEC22/cec22_test_func.cpp external/LSHADE/LSHADE_CEC14/
+          rm -rf external/LSHADE/LSHADE_CEC14/input_data
+          cp -r external/CEC22/input_data_22 external/LSHADE/LSHADE_CEC14/input_data
+
+      - name: Patch benchmark interface only
+        working-directory: external/LSHADE/LSHADE_CEC14
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Header: evaluator declaration only.
+          p=Path("de.h")
+          s=p.read_text()
+          s=s.replace("void cec14_test_func(double *, double *,int,int,int);",
+                      "void cec22_test_func(double *, double *,int,int,int);")
+          p.write_text(s)
+
+          # Evaluation callback + CEC-2022 optimum biases only.
+          p=Path("search_algorithm.cc")
+          s=p.read_text()
+          s=s.replace("cec14_test_func(pop[i],  &fitness[i], problem_size, 1, function_number);",
+                      "cec22_test_func(pop[i],  &fitness[i], problem_size, 1, function_number);")
+          s=s.replace("optimum = function_number * 100;",
+          """static const double cec22_opt[13] = {0,300,400,600,800,900,1800,2000,2200,2300,2400,2600,2700};
+  optimum = cec22_opt[function_number];""")
+          p.write_text(s)
+
+          # Replace only experiment driver. L-SHADE search code is untouched.
+          Path("main.cc").write_text(r'''#include "de.h"
+          #include <fstream>
+          #include <ctime>
+
+          double *OShift,*M,*y,*z,*x_bound;
+          int ini_flag=0,n_flag,func_flag,*SS;
+
+          int g_function_number;
+          int g_problem_size;
+          unsigned int g_max_num_evaluations;
+          int g_pop_size;
+          double g_arc_rate;
+          int g_memory_size;
+          double g_p_best_rate;
+
+          int main(int argc, char **argv) {
+            if (argc != 6) {
+              std::cerr << "usage: lshade_cec22 DIM FUNC RUNS SEED BUDGET\n";
+              return 2;
+            }
+            g_problem_size = atoi(argv[1]);
+            g_function_number = atoi(argv[2]);
+            int num_runs = atoi(argv[3]);
+            unsigned base_seed = (unsigned)strtoul(argv[4], nullptr, 10);
+            g_max_num_evaluations = (unsigned)strtoul(argv[5], nullptr, 10);
+
+            g_pop_size = (int)round(g_problem_size * 18);
+            g_memory_size = 5;
+            g_arc_rate = 1.4;
+            g_p_best_rate = 0.11;
+
+            for (int j=0; j<num_runs; ++j) {
+              unsigned seed = base_seed + (unsigned)j;
+              srand(seed);
+              searchAlgorithm *alg = new LSHADE();
+              Fitness err = alg->run();
+              delete alg;
+              std::cout << "RESULT," << g_problem_size << "," << g_function_number
+                        << "," << (j+1) << "," << seed << ","
+                        << std::scientific << std::setprecision(17) << err << "\n";
+            }
+            return 0;
+          }
+          ''')
+          PY
+
+      - name: Compile source-faithful L-SHADE 1.0.1
+        working-directory: external/LSHADE/LSHADE_CEC14
+        run: |
+          g++ -O3 -std=c++17 main.cc lshade.cc search_algorithm.cc cec22_test_func.cpp -o lshade_cec22
+
+      - name: Validate representative CEC-2022 functions
+        working-directory: external/LSHADE/LSHADE_CEC14
+        run: |
+          set -euxo pipefail
+          mkdir -p validation
+          echo "algorithm,dimension,function,run,seed,error" > validation/results.csv
+          for f in 1 4 6 12; do
+            ./lshade_cec22 10 "$f" 1 "$((20261000+f))" 200000 | tee "validation/F${f}_D10.log"
+            grep '^RESULT,' "validation/F${f}_D10.log" | sed 's/^RESULT,/L-SHADE-1.0.1,/' >> validation/results.csv
+          done
+
+          # D20 smoke validates D20 matrix/shuffle loading and 1M budget.
+          ./lshade_cec22 20 12 1 20262012 1000000 | tee validation/F12_D20.log
+          grep '^RESULT,' validation/F12_D20.log | sed 's/^RESULT,/L-SHADE-1.0.1,/' >> validation/results.csv
+
+          python3 - <<'PY'
+          import csv, math
+          rows=list(csv.DictReader(open("validation/results.csv")))
+          assert len(rows)==5, len(rows)
+          for r in rows:
+              x=float(r["error"])
+              assert math.isfinite(x) and x >= -1e-8, r
+          print("VALIDATION_OK", rows)
+          PY
+
+          {
+            echo "lshade_archive_sha256=3d1211f29e19eed87b2ca0f9eb9ec5aa99fc79bf41d32a5590f6e341d08be9f0"
+            echo "cec22_source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9"
+            sha256sum main.cc de.h search_algorithm.cc lshade.cc cec22_test_func.cpp lshade_cec22
+          } > validation/provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lshade101-cec2022-validation
+          path: external/LSHADE/LSHADE_CEC14/validation
+          retention-days: 90
