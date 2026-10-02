@@ -1,0 +1,61 @@
+name: ctc-de-rescue-base-D20-F11
+
+on:
+  push:
+    branches: [ctc-de-frozen-v1]
+    paths:
+      - '.github/workflows/ctc-de-rescue-base-D20-F11.yml'
+
+jobs:
+  chunk:
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0,1,2,3,4,5]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip numpy pandas
+      - name: Fetch pinned CEC-2022 evaluator/data
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external-cec22
+          git -C external-cec22 checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+          cp external-cec22/cec22_test_func.cpp benchmark/cec22_test_func.cpp
+          rm -rf input_data
+          cp -r external-cec22/input_data_22 input_data
+      - run: g++ -O3 -std=c++17 -shared -fPIC benchmark/cec22_bridge.cpp -o benchmark/libcec22.so
+      - name: Verify frozen optimizer
+        run: echo "70bc55e8cb21d1ad65ab0f3690c6786ee364591d05c6c37351fb66c5a55427a5  algorithms/CTC_DE.py" | sha256sum -c -
+      - name: Run five matched seeds
+        env:
+          CHUNK: ${{ matrix.chunk }}
+        run: |
+          set -euxo pipefail
+          START=$((2026220000 + 20*10000 + 11*100 + CHUNK*5))
+          mkdir -p campaign
+          python3 benchmark/run_ctc_de.py --lib benchmark/libcec22.so --dim 20 --func 11 --runs 5 --base-seed "$START" --budget 1000000 --variant base --out campaign/results.csv | tee campaign/stdout.txt
+          python3 - <<'PY'
+          import pandas as pd, math
+          d=pd.read_csv("campaign/results.csv")
+          assert len(d)==5 and d.seed.nunique()==5 and d.error.map(math.isfinite).all() and (d.nfe==1000000).all()
+          PY
+          {
+            echo "algorithm=CTC-DE"
+            echo "variant=base"
+            echo "dimension=20"
+            echo "function=11"
+            echo "runs=5"
+            echo "chunk=$CHUNK"
+            echo "optimizer_sha256=70bc55e8cb21d1ad65ab0f3690c6786ee364591d05c6c37351fb66c5a55427a5"
+            echo "cec22_source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9"
+          } > campaign/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctc-de-rescue-base-D20-F11-chunk${{ matrix.chunk }}
+          path: campaign
+          retention-days: 90
