@@ -1,0 +1,45 @@
+name: inspect-reference-sources
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch authentic sources
+        run: |
+          set -euxo pipefail
+          mkdir -p external
+          git clone --depth 1 https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external/L-SRTDE
+          git clone --depth 1 https://github.com/TBU-AILab/ResourceFiles_TEVC2021.git external/TEVC2021
+          git clone --depth 1 https://github.com/SichenTao/IEEE-CEC-2025-Competition-RDEx-Series.git external/RDEx
+          curl -L --fail -o external/LSHADE1.0.1_CEC2014.zip https://raw.githubusercontent.com/ryojitanabe/ryojitanabe.github.io/master/code/LSHADE1.0.1_CEC2014.zip
+          unzip -q external/LSHADE1.0.1_CEC2014.zip -d external/LSHADE
+      - name: Record source revisions and layouts
+        run: |
+          {
+            echo "L-SRTDE commit: $(git -C external/L-SRTDE rev-parse HEAD)"
+            echo "jSO mirror commit: $(git -C external/TEVC2021 rev-parse HEAD)"
+            echo "RDEx commit: $(git -C external/RDEx rev-parse HEAD)"
+            echo "L-SHADE archive SHA256: $(sha256sum external/LSHADE1.0.1_CEC2014.zip | awk '{print $1}')"
+            echo
+            echo "=== L-SRTDE files ==="
+            find external/L-SRTDE -maxdepth 2 -type f | sort
+            echo
+            echo "=== jSO files ==="
+            find external/TEVC2021/algorithms/jSO -maxdepth 2 -type f | sort
+            echo
+            echo "=== L-SHADE files ==="
+            find external/LSHADE -maxdepth 3 -type f | sort
+            echo
+            echo "=== RDEx-SOP files ==="
+            find external/RDEx/RDEx_SOP/code/rdex-sop -maxdepth 2 -type f | sort
+          } | tee source_layout.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reference-source-layout
+          path: source_layout.txt
