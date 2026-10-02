@@ -1,0 +1,75 @@
+name: finish-tftmo-adg-heavy-blocks
+
+on:
+  push:
+    paths:
+      - '.github/workflows/finish-tftmo-heavy.yml'
+  workflow_dispatch:
+
+jobs:
+  shard:
+    strategy:
+      fail-fast: false
+      matrix:
+        function: [8,12]
+        offset: [0,5,10,15,20,25]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pin frozen TFTMO source/harness
+        run: |
+          git checkout 81c2e0aa66eb4bfa477ad3a6b374b08cfbc4792f -- algorithms benchmark
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip numpy pandas
+      - name: Fetch pinned CEC-2022 evaluator/data
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external-cec22
+          git -C external-cec22 checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+          cp external-cec22/cec22_test_func.cpp benchmark/cec22_test_func.cpp
+          rm -rf input_data
+          cp -r external-cec22/input_data_22 input_data
+      - name: Build evaluator bridge
+        run: g++ -O3 -std=c++17 -shared -fPIC benchmark/cec22_bridge.cpp -o benchmark/libcec22.so
+      - name: Run exact 5-run seed shard
+        env:
+          FUNC: ${{ matrix.function }}
+          OFFSET: ${{ matrix.offset }}
+        run: |
+          set -euxo pipefail
+          mkdir -p campaign
+          BASE=$((2026220000 + 20*10000 + FUNC*100 + OFFSET))
+          python3 benchmark/run_tftmo_adg.py             --lib benchmark/libcec22.so --dim 20 --func "$FUNC"             --runs 5 --base-seed "$BASE" --budget 1000000             --out campaign/results.csv | tee campaign/stdout.txt
+          python3 - <<'PY'
+          import pandas as pd, os, math
+          p="campaign/results.csv"
+          d=pd.read_csv(p)
+          off=int(os.environ["OFFSET"])
+          d["run"]=d["run"]+off
+          assert len(d)==5
+          assert d["seed"].nunique()==5
+          assert d["error"].apply(math.isfinite).all()
+          assert (d["nfe"]==1000000).all()
+          d.to_csv(p,index=False)
+          print("SHARD_OK",os.environ["FUNC"],off,d["run"].tolist(),d["seed"].tolist())
+          PY
+          {
+            echo "algorithm=TFTMO-ADG-frozen"
+            echo "pinned_campaign_commit=81c2e0aa66eb4bfa477ad3a6b374b08cfbc4792f"
+            echo "dimension=20"
+            echo "function=$FUNC"
+            echo "offset=$OFFSET"
+            echo "runs=5"
+            echo "budget=1000000"
+            echo "cec22_source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9"
+            sha256sum algorithms/TFTMO_ADG.py algorithms/TFTMO_DF.py algorithms/TFTMO_PG2.py benchmark/run_tftmo_adg.py benchmark/cec22_bridge.cpp benchmark/cec22_test_func.cpp benchmark/libcec22.so
+          } > campaign/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tftmo-adg-D20-F${{ matrix.function }}-offset${{ matrix.offset }}
+          path: campaign
+          retention-days: 90
