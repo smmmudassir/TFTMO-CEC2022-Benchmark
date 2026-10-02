@@ -1,0 +1,50 @@
+name: ctc-de-ablation-snapshot
+
+on:
+  push:
+    branches: [ctc-de-frozen-v1]
+    paths:
+      - '.github/workflows/ctc-de-ablation-snapshot.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip pandas numpy scipy
+      - name: Download completed ablation artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p inputs
+          gh run download 37048324261 -D inputs || true
+          find inputs -name results.csv -print | wc -l
+      - name: Merge snapshot
+        run: |
+          python3 - <<'PY'
+          import glob,pandas as pd,os,json
+          fs=glob.glob("inputs/**/results.csv",recursive=True)
+          xs=[]
+          for f in fs:
+              d=pd.read_csv(f); d["source"]=f; xs.append(d)
+          x=pd.concat(xs,ignore_index=True)
+          os.makedirs("snapshot",exist_ok=True)
+          x.to_csv("snapshot/ablation_snapshot.csv",index=False)
+          b=x.groupby(["variant","dimension","function"]).agg(n=("error","size"),runs=("run","nunique"),seeds=("seed","nunique")).reset_index()
+          b.to_csv("snapshot/blocks.csv",index=False)
+          print("SNAPSHOT",len(fs),"blocks",len(x),"rows")
+          print(b.groupby("variant").size())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctc-de-ablation-snapshot
+          path: snapshot
+          retention-days: 90
