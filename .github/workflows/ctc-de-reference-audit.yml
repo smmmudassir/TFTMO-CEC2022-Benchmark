@@ -1,0 +1,78 @@
+name: ctc-de-reference-audit
+
+on:
+  push:
+    branches: [ctc-de-frozen-v1]
+    paths:
+      - '.github/workflows/ctc-de-reference-audit.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip numpy pandas scipy
+      - name: Download completed reference campaigns
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p refs/lshade refs/jso refs/rdex refs/lsrtde
+          gh run download 37018775160 -D refs/lshade
+          gh run download 37023749798 -D refs/jso
+          gh run download 37026217103 -D refs/rdex
+          gh run download 37030142388 -D refs/lsrtde
+      - name: Merge and validate references
+        run: |
+          python3 - <<'PY'
+          import glob, pandas as pd, numpy as np, os
+          alg_expected={"L-SHADE-1.0.1","jSO","RDEx-SOP","L-SRTDE"}
+          rows=[]
+          for f in glob.glob("refs/**/results.csv",recursive=True):
+              d=pd.read_csv(f)
+              need={"algorithm","dimension","function","run","seed","error"}
+              assert need.issubset(d.columns), (f,d.columns)
+              d["source"]=f
+              rows.append(d)
+          x=pd.concat(rows,ignore_index=True)
+          assert set(x.algorithm.unique())==alg_expected, set(x.algorithm.unique())
+          assert np.isfinite(x.error).all()
+          blocks=x.groupby(["algorithm","dimension","function"]).agg(
+              n=("error","size"),runs=("run","nunique"),seeds=("seed","nunique")).reset_index()
+          assert len(blocks)==4*24, blocks
+          assert (blocks[["n","runs","seeds"]]==30).all().all(), blocks[blocks.n!=30]
+          expected=2026220000+x.dimension.astype(int)*10000+x.function.astype(int)*100+(x.run.astype(int)-1)
+          assert (x.seed.astype(int).to_numpy()==expected.to_numpy()).all()
+          assert set(x.dimension.unique())=={10,20}
+          assert set(x.function.unique())==set(range(1,13))
+          os.makedirs("audit",exist_ok=True)
+          x.to_csv("audit/reference_results_merged.csv",index=False)
+          blocks.to_csv("audit/reference_blocks.csv",index=False)
+          stats=x.groupby(["algorithm","dimension","function"]).error.agg(["mean","median","std","min","max"]).reset_index()
+          stats.to_csv("audit/reference_descriptive.csv",index=False)
+          print("REFERENCE_AUDIT_OK",len(x),"rows",len(blocks),"blocks")
+          PY
+      - name: Record provenance
+        run: |
+          {
+            echo "L-SHADE_run_id=37018775160"
+            echo "jSO_run_id=37023749798"
+            echo "RDEx_run_id=37026217103"
+            echo "L-SRTDE_matched_run_id=37030142388"
+            echo "seed_formula=2026220000 + D*10000 + F*100 + (run-1)"
+            echo "expected_blocks=96"
+            echo "expected_rows=2880"
+          } > audit/provenance.txt
+          sha256sum audit/reference_results_merged.csv >> audit/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctc-de-reference-audit
+          path: audit
+          retention-days: 90
