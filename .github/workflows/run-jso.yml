@@ -1,0 +1,154 @@
+name: run-jso-cec2022
+
+on:
+  push:
+    paths:
+      - '.github/workflows/run-jso.yml'
+  workflow_dispatch:
+
+jobs:
+  jso:
+    strategy:
+      fail-fast: false
+      matrix:
+        dimension: [10, 20]
+        function: [1,2,3,4,5,6,7,8,9,10,11,12]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned jSO source and CEC-2022 evaluator
+        run: |
+          set -euxo pipefail
+          mkdir -p external
+          git clone https://github.com/TBU-AILab/ResourceFiles_TEVC2021.git external/TEVC2021
+          git -C external/TEVC2021 checkout 77effc9b594b898e60fd6681a96c5205f24da780
+          cp -r external/TEVC2021/algorithms/jSO external/jSO
+
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external/CEC22
+          git -C external/CEC22 checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+          cp external/CEC22/cec22_test_func.cpp external/jSO/
+          rm -rf external/jSO/input_data
+          cp -r external/CEC22/input_data_22 external/jSO/input_data
+
+      - name: Patch benchmark interface only
+        working-directory: external/jSO
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("de.h")
+          s=p.read_text()
+          s=s.replace("void cec17_test_func(double *, double *,int,int,int);",
+                      "void cec22_test_func(double *, double *,int,int,int);")
+          p.write_text(s)
+
+          p=Path("search_algorithm.cc")
+          s=p.read_text()
+          s=s.replace("cec17_test_func(pop[i],  &fitness[i], problem_size, 1, function_number);",
+                      "cec22_test_func(pop[i],  &fitness[i], problem_size, 1, function_number);")
+          s=s.replace("optimum = function_number * 100;",
+                      "static const double cec22_opt[13] = {0,300,400,600,800,900,1800,2000,2200,2300,2400,2600,2700};" + chr(10) + "  optimum = cec22_opt[function_number];")
+          p.write_text(s)
+
+          Path("main.cc").write_text(r'''#include "de.h"
+          #include <ctime>
+          #include <fstream>
+
+          double *OShift,*M,*y,*z,*x_bound;
+          int ini_flag=0,n_flag,func_flag,*SS;
+
+          int g_function_number;
+          int g_problem_size;
+          unsigned int g_max_num_evaluations;
+
+          int g_pop_size;
+          double g_arc_rate;
+          int g_memory_size;
+          double g_p_best_rate;
+
+          int function_name=0;
+          int tom_bound=0;
+          int tom_dim=0;
+          int tom_testID=0;
+          ofstream outFile;
+
+          int main(int argc, char **argv) {
+            if (argc != 6) {
+              std::cerr << "usage: jso_cec22 DIM FUNC RUNS SEED BUDGET\n";
+              return 2;
+            }
+            g_problem_size = atoi(argv[1]);
+            g_function_number = atoi(argv[2]);
+            int num_runs = atoi(argv[3]);
+            unsigned base_seed = (unsigned)strtoul(argv[4], nullptr, 10);
+            g_max_num_evaluations = (unsigned)strtoul(argv[5], nullptr, 10);
+
+            g_pop_size = (int)round(sqrt(g_problem_size) * log(g_problem_size) * 25);
+            g_memory_size = 5;
+            g_arc_rate = 1.0;
+            g_p_best_rate = 0.25;
+            tom_bound = 0;
+
+            for (int j=0; j<num_runs; ++j) {
+              unsigned seed = base_seed + (unsigned)j;
+              srand(seed);
+              searchAlgorithm *alg = new LSHADE();
+              Fitness err = alg->run();
+              delete alg;
+              std::cout << "RESULT," << g_problem_size << "," << g_function_number
+                        << "," << (j+1) << "," << seed << ","
+                        << std::scientific << std::setprecision(17) << err << "\n";
+            }
+            return 0;
+          }
+          ''')
+          PY
+
+      - name: Compile source-faithful jSO
+        working-directory: external/jSO
+        run: |
+          g++ -O3 -std=c++17 main.cc lshade.cc search_algorithm.cc cec22_test_func.cpp -o jso_cec22
+
+      - name: Run 30 independent runs
+        working-directory: external/jSO
+        env:
+          DIM: ${{ matrix.dimension }}
+          FUNC: ${{ matrix.function }}
+        run: |
+          set -euxo pipefail
+          mkdir -p campaign
+          if [ "$DIM" = "10" ]; then BUDGET=200000; else BUDGET=1000000; fi
+          BASE_SEED=$((2026220000 + DIM*10000 + FUNC*100))
+          echo "algorithm,dimension,function,run,seed,error" > campaign/results.csv
+          ./jso_cec22 "$DIM" "$FUNC" 30 "$BASE_SEED" "$BUDGET" | tee campaign/stdout.txt
+          grep '^RESULT,' campaign/stdout.txt | sed 's/^RESULT,/jSO,/' >> campaign/results.csv
+          python3 - <<'PY'
+          import csv, math, os
+          rows=list(csv.DictReader(open("campaign/results.csv")))
+          assert len(rows)==30, len(rows)
+          for r in rows:
+              x=float(r["error"])
+              assert math.isfinite(x) and x >= -1e-8, r
+          print("BLOCK_OK", os.environ["DIM"], os.environ["FUNC"], len(rows))
+          PY
+          {
+            echo "algorithm=jSO"
+            echo "dimension=$DIM"
+            echo "function=$FUNC"
+            echo "budget=$BUDGET"
+            echo "runs=30"
+            echo "base_seed=$BASE_SEED"
+            echo "jso_source_commit=77effc9b594b898e60fd6681a96c5205f24da780"
+            echo "cec22_source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9"
+            sha256sum main.cc de.h search_algorithm.cc lshade.cc cec22_test_func.cpp jso_cec22
+          } > campaign/provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jso-D${{ matrix.dimension }}-F${{ matrix.function }}
+          path: external/jSO/campaign
+          retention-days: 90
