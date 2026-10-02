@@ -19,7 +19,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Pin frozen TFTMO source/harness
         run: |
-          git checkout 81c2e0aa66eb4bfa477ad3a6b374b08cfbc4792f -- algorithms benchmark
+          git fetch --depth=1 origin 81c2e0aa66eb4bfa477ad3a6b374b08cfbc4792f
+          git checkout FETCH_HEAD -- algorithms benchmark
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
