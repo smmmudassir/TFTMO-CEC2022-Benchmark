@@ -1,0 +1,147 @@
+name: run-lsrtde-matched-cec2022
+
+on:
+  push:
+    paths:
+      - '.github/workflows/run-lsrtde-matched.yml'
+  workflow_dispatch:
+
+jobs:
+  lsrtde:
+    strategy:
+      fail-fast: false
+      matrix:
+        dimension: [10,20]
+        function: [1,2,3,4,5,6,7,8,9,10,11,12]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned L-SRTDE
+        run: |
+          set -euxo pipefail
+          mkdir -p external
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external/L-SRTDE
+          git -C external/L-SRTDE checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+
+      - name: Patch CEC-2022 evaluator and experiment driver only
+        working-directory: external/L-SRTDE
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("L-SRTDE.cpp")
+          s=p.read_text()
+          s=s.replace('const int Benchmark = 17;', 'const int Benchmark = 22;')
+          s=s.replace('//#include "cec22_test_func.cpp"\n#include "cec17_test_func.cpp"',
+                      '#include "cec22_test_func.cpp"\n//#include "cec17_test_func.cpp"')
+          s=s.replace("cec17_test_func(xopt, tempF, GNVars, 1, func_num);",
+                      "cec22_test_func(xopt, tempF, GNVars, 1, func_num);")
+          s=s.replace("cec17_test_func(HostVector, tempF, GNVars, 1, func_num);",
+                      "cec22_test_func(HostVector, tempF, GNVars, 1, func_num);")
+
+          marker="int main(int argc, char** argv)"
+          pos=s.find(marker)
+          assert pos >= 0
+          s=s[:pos] + r'''int main(int argc, char** argv)
+          {
+              if(argc != 6) {
+                  std::cerr << "usage: lsrtde_cec22 DIM FUNC RUNS SEED BUDGET\n";
+                  return 2;
+              }
+              GNVars = atoi(argv[1]);
+              int func_num = atoi(argv[2]);
+              int runs = atoi(argv[3]);
+              unsigned base_seed = (unsigned)strtoul(argv[4], nullptr, 10);
+              MaxFEval = atoi(argv[5]);
+
+              static const double cec22_opt[13] =
+                  {0,300,400,600,800,900,1800,2000,2200,2300,2400,2600,2700};
+              fopt = cec22_opt[func_num];
+
+              const int PopSize = 20;
+
+              for(int run=0; run<runs; ++run)
+              {
+                  unsigned seed = base_seed + (unsigned)run;
+                  generator_uni_i.seed(seed);
+                  generator_uni_r.seed(seed + 100u);
+                  generator_norm.seed(seed + 200u);
+                  generator_uni_i_3.seed(seed + 300u);
+                  srand(seed + 400u);
+
+                  globalbestinit = false;
+                  globalbest = 1.0e300;
+                  LastFEcount = 0;
+                  NFEval = 0;
+                  for(int k=0;k<ResTsize2;k++) ResultsArray[k] = 1.0e300;
+                  ResultsArray[ResTsize2-1] = MaxFEval;
+
+                  Optimizer opt;
+                  opt.Initialize(PopSize*GNVars, GNVars, func_num, func_num);
+                  opt.MainCycle();
+                  opt.Clean();
+
+                  double err = globalbest - fopt;
+                  if(err < 1e-8) err = 0.0;
+
+                  std::cout << "RESULT," << GNVars << "," << func_num
+                            << "," << (run+1) << "," << seed << ","
+                            << std::scientific << std::setprecision(17)
+                            << err << "," << NFEval << "\n";
+              }
+              return 0;
+          }
+          '''
+          p.write_text(s)
+
+          q=Path("cec22_test_func.cpp")
+          t=q.read_text().replace("int GNVars;","extern int GNVars;",1)
+          q.write_text(t)
+          PY
+          rm -rf input_data
+          cp -r input_data_22 input_data
+
+      - name: Compile
+        working-directory: external/L-SRTDE
+        run: g++ -O3 -std=c++17 L-SRTDE.cpp -o lsrtde_cec22
+
+      - name: Run 30 independent matched-seed runs
+        working-directory: external/L-SRTDE
+        env:
+          DIM: ${{ matrix.dimension }}
+          FUNC: ${{ matrix.function }}
+        run: |
+          set -euxo pipefail
+          mkdir -p campaign
+          if [ "$DIM" = "10" ]; then BUDGET=200000; else BUDGET=1000000; fi
+          BASE_SEED=$((2026220000 + DIM*10000 + FUNC*100))
+          echo "algorithm,dimension,function,run,seed,error,nfe" > campaign/results.csv
+          ./lsrtde_cec22 "$DIM" "$FUNC" 30 "$BASE_SEED" "$BUDGET" | tee campaign/stdout.txt
+          grep '^RESULT,' campaign/stdout.txt | sed 's/^RESULT,/L-SRTDE,/' >> campaign/results.csv
+          python3 - <<'PY'
+          import csv, math
+          rows=list(csv.DictReader(open("campaign/results.csv")))
+          assert len(rows)==30, len(rows)
+          assert len({r["seed"] for r in rows})==30
+          for r in rows:
+              assert math.isfinite(float(r["error"])) and float(r["error"]) >= -1e-8
+          print("BLOCK_OK", len(rows))
+          PY
+          {
+            echo "algorithm=L-SRTDE"
+            echo "source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9"
+            echo "adapter_scope=evaluator,optimum,seed,experiment-driver only"
+            echo "dimension=$DIM"
+            echo "function=$FUNC"
+            echo "budget=$BUDGET"
+            echo "base_seed=$BASE_SEED"
+            sha256sum L-SRTDE.cpp cec22_test_func.cpp lsrtde_cec22
+          } > campaign/provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lsrtde-matched-D${{ matrix.dimension }}-F${{ matrix.function }}
+          path: external/L-SRTDE/campaign
+          retention-days: 90
