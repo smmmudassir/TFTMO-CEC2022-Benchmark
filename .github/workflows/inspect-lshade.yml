@@ -1,0 +1,34 @@
+name: inspect-lshade-101
+
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-lshade.yml'
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch corrected L-SHADE 1.0.1 archive
+        run: |
+          set -euxo pipefail
+          mkdir -p external
+          curl -L --fail -o external/LSHADE1.0.1_CEC2014.zip https://raw.githubusercontent.com/ryojitanabe/ryojitanabe.github.io/master/code/LSHADE1.0.1_CEC2014.zip
+          echo "archive_sha256=$(sha256sum external/LSHADE1.0.1_CEC2014.zip | awk '{print $1}')"
+          unzip -q external/LSHADE1.0.1_CEC2014.zip -d external/LSHADE
+      - name: Show driver and benchmark interface
+        run: |
+          set -euxo pipefail
+          cd external/LSHADE/LSHADE_CEC14
+          echo '=== main.cc ==='
+          cat main.cc
+          echo '=== search_algorithm.cc ==='
+          cat search_algorithm.cc
+          echo '=== de.h ==='
+          cat de.h
+          echo '=== Makefile ==='
+          cat Makefile
+          echo '=== relevant lshade symbols ==='
+          grep -nE 'initializeParameters|max_num_evaluations|optimum|evaluatePopulation|run\(|srand|num_runs|g_problem_size|g_function_number|g_pop_size|memory|arc_rate|p_best' lshade.cc | head -250
