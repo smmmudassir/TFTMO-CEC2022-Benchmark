@@ -1,0 +1,162 @@
+name: run-rdex-cec2022
+
+on:
+  push:
+    paths:
+      - '.github/workflows/run-rdex.yml'
+  workflow_dispatch:
+
+jobs:
+  rdex:
+    strategy:
+      fail-fast: false
+      matrix:
+        dimension: [10, 20]
+        function: [1,2,3,4,5,6,7,8,9,10,11,12]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned RDEx-SOP and CEC-2022 evaluator
+        run: |
+          set -euxo pipefail
+          mkdir -p external
+          git clone https://github.com/SichenTao/IEEE-CEC-2025-Competition-RDEx-Series.git external/RDEx
+          git -C external/RDEx checkout 48914a7ca4018a5a782b932181637b7e2e18bc3b
+          cp -r external/RDEx/RDEx_SOP/code/rdex-sop external/rdex
+
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external/CEC22
+          git -C external/CEC22 checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+          cp external/CEC22/cec22_test_func.cpp external/rdex/
+          rm -rf external/rdex/input_data
+          cp -r external/CEC22/input_data_22 external/rdex/input_data
+
+      - name: Patch benchmark driver only
+        working-directory: external/rdex
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("RDEx.cpp")
+          s=p.read_text()
+
+          s=s.replace('const int Benchmark = 17;\n#include "cec17_test_func.cpp"',
+                      'const int Benchmark = 22;\n#include <iomanip>\n#include "cec22_test_func.cpp"')
+          s=s.replace("cec17_test_func(xopt, tempF, GNVars, 1, func_num);",
+                      "cec22_test_func(xopt, tempF, GNVars, 1, func_num);")
+          s=s.replace("cec17_test_func(HostVector, tempF, GNVars, 1, func_num);",
+                      "cec22_test_func(HostVector, tempF, GNVars, 1, func_num);")
+
+          marker="int main(int argc, char** argv)"
+          pos=s.find(marker)
+          assert pos >= 0
+          s=s[:pos] + r'''int main(int argc, char** argv)
+          {
+              if (argc != 6) {
+                  std::cerr << "usage: rdex_cec22 DIM FUNC RUNS SEED BUDGET\n";
+                  return 2;
+              }
+
+              GNVars = atoi(argv[1]);
+              int func_num = atoi(argv[2]);
+              int runs = atoi(argv[3]);
+              unsigned base_seed = (unsigned)strtoul(argv[4], nullptr, 10);
+              MaxFEval = atoi(argv[5]);
+
+              static const double cec22_opt[13] =
+                  {0,300,400,600,800,900,1800,2000,2200,2300,2400,2600,2700};
+              fopt = cec22_opt[func_num];
+
+              const int PopSize = 18;
+
+              for (int run=0; run<runs; ++run) {
+                  unsigned seed = base_seed + (unsigned)run;
+
+                  generator_uni_i.seed(seed);
+                  generator_uni_r.seed(seed + 100u);
+                  generator_norm.seed(seed + 200u);
+                  generator_uni_i_3.seed(seed + 300u);
+                  generator_cachy.seed(seed + 400u);
+                  srand(seed + 500u);
+
+                  globalbestinit = false;
+                  globalbest = 1.0e300;
+                  LastFEcount = 0;
+                  NFEval = 0;
+                  for (int k=0; k<ResTsize2; ++k) ResultsArray[k] = 1.0e300;
+                  ResultsArray[ResTsize2-1] = MaxFEval;
+
+                  Optimizer opt;
+                  opt.Initialize(PopSize*GNVars, GNVars, func_num, func_num);
+                  opt.MainCycle();
+                  opt.Clean();
+
+                  double err = globalbest - fopt;
+                  if (err < 1e-8) err = 0.0;
+
+                  std::cout << "RESULT," << GNVars << "," << func_num
+                            << "," << (run+1) << "," << seed << ","
+                            << std::scientific << std::setprecision(17)
+                            << err << "," << NFEval << "\n";
+              }
+              return 0;
+          }
+          '''
+          p.write_text(s)
+
+          q=Path("cec22_test_func.cpp")
+          t=q.read_text().replace("int GNVars;","extern int GNVars;",1)
+          q.write_text(t)
+          PY
+
+      - name: Compile source-faithful RDEx-SOP
+        working-directory: external/rdex
+        run: |
+          g++ -O3 -std=c++17 -I . RDEx.cpp -o rdex_cec22
+
+      - name: Run 30 independent runs
+        working-directory: external/rdex
+        env:
+          DIM: ${{ matrix.dimension }}
+          FUNC: ${{ matrix.function }}
+        run: |
+          set -euxo pipefail
+          mkdir -p campaign
+          if [ "$DIM" = "10" ]; then BUDGET=200000; else BUDGET=1000000; fi
+          BASE_SEED=$((2026220000 + DIM*10000 + FUNC*100))
+          echo "algorithm,dimension,function,run,seed,error,nfe" > campaign/results.csv
+          ./rdex_cec22 "$DIM" "$FUNC" 30 "$BASE_SEED" "$BUDGET" | tee campaign/stdout.txt
+          grep '^RESULT,' campaign/stdout.txt | sed 's/^RESULT,/RDEx-SOP,/' >> campaign/results.csv
+
+          python3 - <<'PY'
+          import csv, math, os
+          rows=list(csv.DictReader(open("campaign/results.csv")))
+          assert len(rows)==30, len(rows)
+          for r in rows:
+              x=float(r["error"])
+              assert math.isfinite(x) and x >= -1e-8, r
+              assert int(r["nfe"]) >= int(r["dimension"]) * 18
+          print("BLOCK_OK", os.environ["DIM"], os.environ["FUNC"], len(rows))
+          PY
+
+          {
+            echo "algorithm=RDEx-SOP"
+            echo "dimension=$DIM"
+            echo "function=$FUNC"
+            echo "budget=$BUDGET"
+            echo "runs=30"
+            echo "base_seed=$BASE_SEED"
+            echo "rdex_source_commit=48914a7ca4018a5a782b932181637b7e2e18bc3b"
+            echo "cec22_source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9"
+            echo "adapter_scope=evaluator,optimum,seed,experiment-driver only"
+            sha256sum RDEx.cpp cec22_test_func.cpp rdex_cec22
+          } > campaign/provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rdex-D${{ matrix.dimension }}-F${{ matrix.function }}
+          path: external/rdex/campaign
+          retention-days: 90
