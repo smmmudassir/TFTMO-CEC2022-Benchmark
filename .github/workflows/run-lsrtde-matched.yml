@@ -33,6 +33,7 @@ jobs:
           from pathlib import Path
           p=Path("L-SRTDE.cpp")
           s=p.read_text()
+          s=s.replace('#include <fstream>', '#include <fstream>\n#include <iomanip>')
           s=s.replace('const int Benchmark = 17;', 'const int Benchmark = 22;')
           s=s.replace('//#include "cec22_test_func.cpp"\n#include "cec17_test_func.cpp"',
                       '#include "cec22_test_func.cpp"\n//#include "cec17_test_func.cpp"')
