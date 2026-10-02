@@ -1,0 +1,30 @@
+# CTC-DE publication readiness checklist
+
+- [x] Distinct development branch
+- [x] Python reference implementation
+- [x] MATLAB R2019a-compatible reference implementation
+- [x] Exact-FE CEC-2022 runner
+- [x] 5-run pilot workflow
+- [x] 30-run full workflow
+- [x] Prespecified ablations
+- [x] Publication protocol
+- [x] Statistics script
+- [x] Manuscript methodology scaffold
+- [ ] Pilot CI completed and validated
+- [ ] Algorithm frozen with SHA-256 + immutable git tag
+- [ ] Full CEC-2022 CTC-DE 30-run campaign complete
+- [ ] L-SHADE reference campaign validated
+- [ ] jSO reference campaign validated
+- [ ] L-SRTDE reference campaign validated
+- [ ] RDEx/RDE-family reference campaign validated
+- [ ] Merged matched-seed statistical analysis
+- [ ] Full ablation campaigns
+- [ ] CEC-2017 external validation
+- [ ] Runtime/complexity analysis
+- [ ] Sensitivity analysis
+- [ ] Search-dynamics diagnostics
+- [ ] Engineering design applications
+- [ ] Final figures/tables
+- [ ] Manuscript results/discussion populated from artifacts
+- [ ] Reproducibility release/tag archived
+- [ ] Journal formatting and submission package
