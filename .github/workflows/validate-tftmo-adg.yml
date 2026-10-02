@@ -1,0 +1,64 @@
+name: validate-tftmo-adg-cec2022
+
+on:
+  push:
+    paths:
+      - 'algorithms/**'
+      - 'benchmark/**'
+      - '.github/workflows/validate-tftmo-adg.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned official-source CEC-2022 evaluator/data
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external-cec22
+          git -C external-cec22 checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+          cp external-cec22/cec22_test_func.cpp benchmark/cec22_test_func.cpp
+          rm -rf input_data
+          cp -r external-cec22/input_data_22 input_data
+
+      - name: Build evaluator bridge
+        run: |
+          g++ -O3 -std=c++17 -shared -fPIC benchmark/cec22_bridge.cpp -o benchmark/libcec22.so
+
+      - name: Validate frozen TFTMO-ADG
+        run: |
+          set -euxo pipefail
+          mkdir -p validation
+          for f in 1 4 6 12; do
+            BASE_SEED=$((2026220000 + 10*10000 + f*100))
+            python3 benchmark/run_tftmo_adg.py --lib benchmark/libcec22.so --dim 10 --func "$f" --runs 1 --base-seed "$BASE_SEED" --budget 200000 --out "validation/F${f}_D10.csv"
+          done
+          BASE_SEED=$((2026220000 + 20*10000 + 12*100))
+          python3 benchmark/run_tftmo_adg.py --lib benchmark/libcec22.so --dim 20 --func 12 --runs 1 --base-seed "$BASE_SEED" --budget 1000000 --out validation/F12_D20.csv
+
+          python3 - <<'PY'
+          import glob,pandas as pd,math
+          files=glob.glob("validation/*.csv")
+          assert len(files)==5,files
+          d=pd.concat([pd.read_csv(x) for x in files],ignore_index=True)
+          assert len(d)==5
+          assert d["error"].apply(math.isfinite).all()
+          assert ((d["dimension"]==10)&(d["nfe"]==200000) | (d["dimension"]==20)&(d["nfe"]==1000000)).all()
+          print(d.to_string(index=False))
+          PY
+
+          {
+            echo "algorithm=TFTMO-ADG-frozen"
+            echo "cec22_source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9"
+            echo "parameters=pop36,min_frac0.60,max_frac0.95,patience_frac0.08"
+            sha256sum algorithms/TFTMO_ADG.py algorithms/TFTMO_DF.py algorithms/TFTMO_PG2.py benchmark/run_tftmo_adg.py benchmark/cec22_bridge.cpp benchmark/cec22_test_func.cpp benchmark/libcec22.so
+          } > validation/provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tftmo-adg-cec2022-validation
+          path: validation
+          retention-days: 90
