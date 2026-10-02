@@ -48,9 +48,7 @@ jobs:
           s=p.read_text()
           s=s.replace("cec14_test_func(pop[i],  &fitness[i], problem_size, 1, function_number);",
                       "cec22_test_func(pop[i],  &fitness[i], problem_size, 1, function_number);")
-          s=s.replace("optimum = function_number * 100;",
-          """static const double cec22_opt[13] = {0,300,400,600,800,900,1800,2000,2200,2300,2400,2600,2700};
-  optimum = cec22_opt[function_number];""")
+          s=s.replace("optimum = function_number * 100;", "static const double cec22_opt[13] = {0,300,400,600,800,900,1800,2000,2200,2300,2400,2600,2700};\\n  optimum = cec22_opt[function_number];")
           p.write_text(s)
 
           # Replace only experiment driver. L-SHADE search code is untouched.
