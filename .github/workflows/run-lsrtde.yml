@@ -36,6 +36,12 @@ jobs:
           s=s.replace("cec17_test_func(HostVector, tempF, GNVars, 1, func_num);\n    //cec22_test_func(HostVector, tempF, GNVars, 1, func_num);",
                       "//cec17_test_func(HostVector, tempF, GNVars, 1, func_num);\n    cec22_test_func(HostVector, tempF, GNVars, 1, func_num);")
           p.write_text(s)
+          q=Path("cec22_test_func.cpp")
+          t=q.read_text().replace("int GNVars;","extern int GNVars;",1)
+          q.write_text(t)
+          p=Path("L-SRTDE.cpp")
+          s=p.read_text().replace("cec17_test_func(xtmp, tempF, GNVars, 1, func_num);","cec22_test_func(xtmp, tempF, GNVars, 1, func_num);")
+          p.write_text(s)
           PY
           rm -rf input_data
           cp -r input_data_22 input_data
