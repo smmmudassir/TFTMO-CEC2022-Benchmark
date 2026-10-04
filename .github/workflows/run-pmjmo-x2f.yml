@@ -1,0 +1,85 @@
+name: run-pmjmo-x2f-cec2022
+
+on:
+  push:
+    paths:
+      - '.github/workflows/run-pmjmo-x2f.yml'
+  workflow_dispatch:
+
+jobs:
+  pmjmo:
+    strategy:
+      fail-fast: false
+      matrix:
+        dimension: [10,20]
+        function: [1,2,3,4,5,6,7,8,9,10,11,12]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip numpy pandas
+
+      - name: Verify frozen PMJMO source
+        run: |
+          set -euxo pipefail
+          echo "89d013851d408fb51930d670b95c93e7aeb5f3d186e100fd5a68bc0118ca6976  PMJMO_X2F_FROZEN.py" | sha256sum -c -
+
+      - name: Fetch pinned CEC-2022 evaluator/data
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/VladimirStanovov/L-SRTDE_CEC-2024.git external-cec22
+          git -C external-cec22 checkout fa7291054a83ce5f46132c4045c6a7878e9611e9
+          cp external-cec22/cec22_test_func.cpp official_cec2022/cec22_test_func.cpp
+          rm -rf input_data
+          cp -r external-cec22/input_data_22 input_data
+
+      - name: Build evaluator bridge
+        run: g++ -O3 -std=c++17 -shared -fPIC official_cec2022/cec22_bridge.cpp -o official_cec2022/libcec22.so
+
+      - name: Run 30 matched-seed frozen PMJMO runs
+        env:
+          DIM: ${{ matrix.dimension }}
+          FUNC: ${{ matrix.function }}
+        run: |
+          set -euxo pipefail
+          mkdir -p campaign
+          if [ "$DIM" = "10" ]; then BUDGET=200000; else BUDGET=1000000; fi
+          BASE_SEED=$((2026220000 + DIM*10000 + FUNC*100))
+          python3 official_cec2022/run_pmjmo_x2f.py             --lib official_cec2022/libcec22.so             --dim "$DIM" --func "$FUNC" --runs 30             --base-seed "$BASE_SEED" --budget "$BUDGET"             --out campaign/results.csv | tee campaign/stdout.txt
+
+          python3 - <<'PY'
+          import pandas as pd, math, os
+          d=pd.read_csv("campaign/results.csv")
+          assert len(d)==30, len(d)
+          assert d["seed"].nunique()==30
+          assert d["run"].nunique()==30
+          assert d["error"].apply(math.isfinite).all()
+          budget=200000 if int(os.environ["DIM"])==10 else 1000000
+          assert (d["nfe"]==budget).all()
+          assert d["source_sha256"].nunique()==1
+          assert d["source_sha256"].iloc[0]=="89d013851d408fb51930d670b95c93e7aeb5f3d186e100fd5a68bc0118ca6976"
+          print("BLOCK_OK",os.environ["DIM"],os.environ["FUNC"],len(d))
+          PY
+
+          {
+            echo "algorithm=PMJMO-X2f-frozen"
+            echo "dimension=$DIM"
+            echo "function=$FUNC"
+            echo "budget=$BUDGET"
+            echo "runs=30"
+            echo "base_seed=$BASE_SEED"
+            echo "pmjmo_sha256=89d013851d408fb51930d670b95c93e7aeb5f3d186e100fd5a68bc0118ca6976"
+            echo "cec22_source_commit=fa7291054a83ce5f46132c4045c6a7878e9611e9"
+            sha256sum PMJMO_X2F_FROZEN.py official_cec2022/run_pmjmo_x2f.py official_cec2022/cec22_bridge.cpp official_cec2022/cec22_test_func.cpp official_cec2022/libcec22.so
+          } > campaign/provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pmjmo-x2f-D${{ matrix.dimension }}-F${{ matrix.function }}
+          path: campaign
+          retention-days: 90
