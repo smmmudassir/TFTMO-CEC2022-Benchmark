@@ -1,0 +1,3 @@
+PMJMO-X2f frozen candidate
+SHA-256: 89d013851d408fb51930d670b95c93e7aeb5f3d186e100fd5a68bc0118ca6976
+Freeze rule: no source, parameter, or operator change is permitted when interpreting the archived CEC-2022 campaign as the external validation of X2f.
