@@ -1,0 +1,31 @@
+name: analyze-pmjmo-final-cec2022
+on:
+  push:
+    paths:
+      - '.github/workflows/analyze-pmjmo-final.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip numpy pandas scipy tabulate
+      - name: Compute final statistics
+        run: python analysis/pmjmo_final_statistics.py | tee analysis/final_stdout.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pmjmo-final-cec2022-statistics
+          path: |
+            analysis/pmjmo_block_summary.csv
+            analysis/pmjmo_final_rank_table.csv
+            analysis/pmjmo_final_omnibus.csv
+            analysis/pmjmo_final_pairwise.csv
+            analysis/pmjmo_final_per_function.csv
+            analysis/PMJMO_FINAL_CEC2022_REPORT.md
+            analysis/final_stdout.txt
+          retention-days: 90
