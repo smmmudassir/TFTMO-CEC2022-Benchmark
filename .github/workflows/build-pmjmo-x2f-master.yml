@@ -1,0 +1,80 @@
+name: build-pmjmo-x2f-archival-master
+on:
+  push:
+    paths:
+      - '.github/workflows/build-pmjmo-x2f-master.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install analysis dependencies
+        run: python -m pip install --upgrade pip numpy pandas scipy tabulate
+      - name: Recompute archived statistical outputs
+        run: python analysis/pmjmo_final_statistics.py
+      - name: Verify master dataset
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          p="analysis/PMJMO_X2F_CEC2022_MASTER_3600_RUNS.csv"
+          d=pd.read_csv(p)
+          assert len(d)==3600
+          counts=d["algorithm"].value_counts().to_dict()
+          assert all(v==720 for v in counts.values()) and len(counts)==5, counts
+          assert d.groupby(["algorithm","dimension","function"]).size().eq(30).all()
+          want=2026220000+d["dimension"]*10000+d["function"]*100+(d["run"]-1)
+          assert (d["seed"]==want).all()
+          print("MASTER_OK",counts)
+          PY
+      - name: Assemble archive
+        run: |
+          set -euxo pipefail
+          B=PMJMO_X2F_CEC2022_ARCHIVAL_MASTER
+          rm -rf "$B"
+          mkdir -p "$B"/{data,source,workflows,statistics,documentation,provenance}
+          cp analysis/PMJMO_X2F_CEC2022_MASTER_3600_RUNS.csv "$B/data/"
+          cp analysis/PMJMO_X2F_CEC2022_MASTER_MANIFEST.json "$B/data/"
+          cp analysis/archive_*_part*.csv "$B/data/"
+          cp analysis/pmjmo_x2f_cec2022_720runs.csv "$B/data/"
+          cp PMJMO_X2F_FROZEN.py "$B/source/"
+          cp official_cec2022/run_pmjmo_x2f.py "$B/source/"
+          cp official_cec2022/cec22_bridge.cpp "$B/source/"
+          cp .github/workflows/run-pmjmo-x2f.yml "$B/workflows/"
+          cp .github/workflows/run-lshade.yml "$B/workflows/"
+          cp .github/workflows/run-lsrtde-matched.yml "$B/workflows/"
+          cp .github/workflows/run-jso.yml "$B/workflows/"
+          cp .github/workflows/run-rdex.yml "$B/workflows/"
+          cp analysis/pmjmo_final_statistics.py "$B/statistics/"
+          cp analysis/pmjmo_block_summary.csv "$B/statistics/"
+          cp analysis/pmjmo_final_rank_table.csv "$B/statistics/"
+          cp analysis/pmjmo_final_omnibus.csv "$B/statistics/"
+          cp analysis/pmjmo_final_pairwise.csv "$B/statistics/"
+          cp analysis/pmjmo_final_per_function.csv "$B/statistics/"
+          cp analysis/PMJMO_FINAL_CEC2022_REPORT.md "$B/statistics/"
+          cp archive/README_MASTER.md "$B/README.md"
+          cp archive/CITATION.cff "$B/CITATION.cff"
+          cp archive/PMJMO_X2F_FREEZE.txt "$B/provenance/"
+          {
+            echo "Repository commit:"
+            git rev-parse HEAD
+            echo
+            echo "Workflow run IDs:"
+            echo "PMJMO-X2f 37207609795"
+            echo "L-SHADE-1.0.1 37018775160"
+            echo "L-SRTDE 37030142388"
+            echo "jSO 37023749798"
+            echo "RDEx-SOP 37026217103"
+          } > "$B/provenance/CAMPAIGN_PROVENANCE.txt"
+          find "$B" -type f -print0 | sort -z | xargs -0 sha256sum > "$B/SHA256SUMS.txt"
+          zip -r PMJMO_X2F_CEC2022_ARCHIVAL_MASTER.zip "$B"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PMJMO-X2F-CEC2022-ARCHIVAL-MASTER
+          path: PMJMO_X2F_CEC2022_ARCHIVAL_MASTER.zip
+          retention-days: 90
