@@ -1,0 +1,41 @@
+{
+  "title": "PMJMO-X2f CEC-2022 five-algorithm archival master dataset",
+  "rows": 3600,
+  "algorithms": {
+    "jSO": 720,
+    "L-SHADE-1.0.1": 720,
+    "L-SRTDE": 720,
+    "PMJMO-X2f-frozen": 720,
+    "RDEx-SOP": 720
+  },
+  "blocks_per_algorithm": 24,
+  "runs_per_block": 30,
+  "dimensions": [
+    10,
+    20
+  ],
+  "functions": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "seed_formula": "2026220000 + dimension*10000 + function*100 + (run-1)",
+  "seed_alignment_mismatches": 0,
+  "note": "nfe/best_f/elapsed_s may be blank when the original comparator workflow did not emit that field in RESULT lines; error/seed/run/block fields are preserved from workflow logs.",
+  "source_workflow_runs": {
+    "PMJMO-X2f-frozen": 37207609795,
+    "L-SHADE-1.0.1": 37018775160,
+    "L-SRTDE": 37030142388,
+    "jSO": 37023749798,
+    "RDEx-SOP": 37026217103
+  }
+}
