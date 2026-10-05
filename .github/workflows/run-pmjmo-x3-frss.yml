@@ -1,0 +1,72 @@
+name: pmjmo-x3-frss2026-screen
+
+on:
+  push:
+    paths:
+      - '.github/workflows/run-pmjmo-x3-frss.yml'
+  workflow_dispatch:
+
+jobs:
+  frss:
+    strategy:
+      fail-fast: false
+      matrix:
+        dimension: [20,50,100]
+        function: [1,2,3,4,5,6,7,8,9,10]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip numpy pandas scipy
+
+      - name: Run matched fresh-suite screen
+        env:
+          DIM: ${{ matrix.dimension }}
+          FUNC: ${{ matrix.function }}
+        run: |
+          set -euxo pipefail
+          mkdir -p campaign
+          BUDGET=$((1000*DIM))
+          BASE_SEED=$((2026310000 + DIM*10000 + FUNC*100))
+          INSTANCE_SEED=$((2026100500 + DIM*1000 + FUNC))
+          python3 pmjmo_x3_dev/run_frss2026.py \
+            --dim "$DIM" --func "$FUNC" --runs 5 \
+            --budget "$BUDGET" --base-seed "$BASE_SEED" \
+            --instance-seed "$INSTANCE_SEED" \
+            --out campaign/results.csv | tee campaign/stdout.txt
+
+          python3 - <<'PY'
+          import pandas as pd, math, os
+          d=pd.read_csv("campaign/results.csv")
+          assert len(d)==20
+          assert set(d["variant"])=={"X3-full","X3-no-geometry","X3-backbone","X2f-frozen"}
+          assert d.groupby("variant")["run"].nunique().eq(5).all()
+          assert d.groupby("run")["seed"].nunique().eq(1).all()
+          assert d["error"].map(math.isfinite).all()
+          budget=1000*int(os.environ["DIM"])
+          assert (d["nfe"]==budget).all()
+          print("BLOCK_OK",os.environ["DIM"],os.environ["FUNC"],len(d))
+          PY
+
+          {
+            echo "suite=FRSS-2026"
+            echo "phase=fresh-development-screen"
+            echo "dimension=$DIM"
+            echo "function=$FUNC"
+            echo "runs=5"
+            echo "budget=$BUDGET"
+            echo "base_seed=$BASE_SEED"
+            echo "instance_seed=$INSTANCE_SEED"
+            echo "cec2022_used_for_tuning=false"
+            sha256sum pmjmo_x3_dev/pmjmo_x3_alpha.py pmjmo_x3_dev/frss2026.py pmjmo_x3_dev/run_frss2026.py PMJMO_X2F_FROZEN.py
+          } > campaign/provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pmjmo-x3-frss-D${{ matrix.dimension }}-F${{ matrix.function }}
+          path: campaign
+          retention-days: 90
