@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this archival dataset or software, please cite the corresponding PMJMO-X2f technical report or dataset record."
+title: "PMJMO-X2f CEC-2022 Five-Algorithm Reproducibility Archive"
+type: dataset
+version: "1.0.0"
+date-released: "2026-10-05"
+authors:
+  - family-names: "Mudassir"
+    given-names: "Syed Mujtaba Mahdi"
+repository-code: "https://github.com/smmmudassir/TFTMO-CEC2022-Benchmark"
+keywords:
+  - metaheuristic optimization
+  - CEC-2022
+  - differential evolution
+  - reproducibility
+  - negative results
+  - PMJMO
