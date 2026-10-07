@@ -1,0 +1,68 @@
+name: pmjmo-x3beta-frss2026b-analyze
+
+on:
+  workflow_run:
+    workflows: ["pmjmo-x3beta-frss2026b-confirm"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  analyze:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install analysis dependencies
+        run: python -m pip install --upgrade pip numpy pandas scipy tabulate
+
+      - name: Download all 30 confirmation artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pmjmo-x3beta-frss2026b-*
+          path: downloaded
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify artifact coverage
+        run: |
+          set -euxo pipefail
+          COUNT=$(find downloaded -type f -name results.csv | wc -l)
+          echo "results.csv count=$COUNT"
+          test "$COUNT" -eq 30
+
+      - name: Run predeclared statistical freeze gate
+        run: |
+          set -euxo pipefail
+          python pmjmo_x3_dev/analyze_frss2026b.py \
+            --input-root downloaded \
+            --out-dir analysis | tee analysis_stdout.txt
+          cat analysis/PMJMO_X3BETA_FRSS2026B_CONFIRMATION.md
+          cat analysis/pmjmo_x3beta_frss2026b_decision.json
+
+      - name: Record source-run provenance
+        run: |
+          {
+            echo "source_workflow_run_id=${{ github.event.workflow_run.id }}"
+            echo "source_head_sha=${{ github.event.workflow_run.head_sha }}"
+            echo "source_conclusion=${{ github.event.workflow_run.conclusion }}"
+            echo "analysis_workflow_sha=${{ github.sha }}"
+          } > analysis/workflow_provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pmjmo-x3beta-frss2026b-final-analysis
+          path: |
+            analysis
+            analysis_stdout.txt
+          retention-days: 90
