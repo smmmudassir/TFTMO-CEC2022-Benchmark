@@ -21,11 +21,11 @@ jobs:
           git clone --filter=blob:none https://github.com/TBU-AILab/ResourceFiles_TEVC2021.git sources/jso-repo
           git -C sources/jso-repo checkout --detach 77effc9b594b898e60fd6681a96c5205f24da780
           test "$(git -C sources/jso-repo rev-parse HEAD)" = "77effc9b594b898e60fd6681a96c5205f24da780"
-          test "$(git -C sources/jso-repo hash-object sources/jso-repo/algorithms/jSO/lshade.cc)" = "dcd17f0018f41e501e3ff3bd0944c3ff4e76352f"
+          test "$(git -C sources/jso-repo hash-object algorithms/jSO/lshade.cc)" = "dcd17f0018f41e501e3ff3bd0944c3ff4e76352f"
           git clone https://github.com/SichenTao/IEEE-CEC-2025-Competition-RDEx-Series.git sources/rdex-repo
           git -C sources/rdex-repo checkout --detach 48914a7ca4018a5a782b932181637b7e2e18bc3b
           test "$(git -C sources/rdex-repo rev-parse HEAD)" = "48914a7ca4018a5a782b932181637b7e2e18bc3b"
-          test "$(git -C sources/rdex-repo hash-object sources/rdex-repo/RDEx_SOP/code/rdex-sop/RDEx.cpp)" = "a7de0d9b9c5fddf65e7bbd75461c8c91c154659b"
+          test "$(git -C sources/rdex-repo hash-object RDEx_SOP/code/rdex-sop/RDEx.cpp)" = "a7de0d9b9c5fddf65e7bbd75461c8c91c154659b"
           echo 'Source identities verified.'
       - name: Native compile smoke tests (unmodified algorithms)
         shell: bash
