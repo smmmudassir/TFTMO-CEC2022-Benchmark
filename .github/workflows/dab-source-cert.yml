@@ -1,0 +1,53 @@
+name: DAB original-source identity and native build gate
+on:
+  push:
+    branches: [validation/source-cert-dab-20261008]
+    paths: ['.github/workflows/dab-source-cert.yml']
+  workflow_dispatch:
+jobs:
+  source-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify original-author sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sources
+          curl -L --fail --retry 3 -o sources/LSHADE1.0.1_CEC2014.zip 'https://raw.githubusercontent.com/ryojitanabe/ryojitanabe.github.io/master/code/LSHADE1.0.1_CEC2014.zip'
+          test "$(sha256sum sources/LSHADE1.0.1_CEC2014.zip | cut -d' ' -f1)" = "3d1211f29e19eed87b2ca0f9eb9ec5aa99fc79bf41d32a5590f6e341d08be9f0"
+          unzip -q sources/LSHADE1.0.1_CEC2014.zip -d sources/L-SHADE
+          git clone --filter=blob:none https://github.com/TBU-AILab/ResourceFiles_TEVC2021.git sources/jso-repo
+          git -C sources/jso-repo checkout --detach 77effc9b594b898e60fd6681a96c5205f24da780
+          test "$(git -C sources/jso-repo rev-parse HEAD)" = "77effc9b594b898e60fd6681a96c5205f24da780"
+          test "$(git -C sources/jso-repo hash-object sources/jso-repo/algorithms/jSO/lshade.cc)" = "dcd17f0018f41e501e3ff3bd0944c3ff4e76352f"
+          git clone https://github.com/SichenTao/IEEE-CEC-2025-Competition-RDEx-Series.git sources/rdex-repo
+          git -C sources/rdex-repo checkout --detach 48914a7ca4018a5a782b932181637b7e2e18bc3b
+          test "$(git -C sources/rdex-repo rev-parse HEAD)" = "48914a7ca4018a5a782b932181637b7e2e18bc3b"
+          test "$(git -C sources/rdex-repo hash-object sources/rdex-repo/RDEx_SOP/code/rdex-sop/RDEx.cpp)" = "a7de0d9b9c5fddf65e7bbd75461c8c91c154659b"
+          echo 'Source identities verified.'
+      - name: Native compile smoke tests (unmodified algorithms)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls sources/L-SHADE
+          find sources/L-SHADE -name lshade.cc -print
+          (cd sources/jso-repo/algorithms/jSO && g++ -O2 -std=c++17 main.cc lshade.cc search_algorithm.cc cec17_test_func.cc -o jso-native-smoke)
+          (cd sources/rdex-repo/RDEx_SOP/code/rdex-sop && g++ -O2 -std=c++17 -I . RDEx.cpp -o rdex-native-smoke)
+          echo 'jSO and RDEx original sources compile (native benchmark interfaces).'
+      - name: Capture immutable provenance
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p source-audit
+          sha256sum sources/LSHADE1.0.1_CEC2014.zip > source-audit/lshade_archive_sha256.txt
+          git -C sources/jso-repo rev-parse HEAD > source-audit/jso_commit.txt
+          git -C sources/rdex-repo rev-parse HEAD > source-audit/rdex_commit.txt
+          echo 'Native compilation alone does not source-certify DAB performance.' > source-audit/LIMITATION.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-source-provenance
+          path: source-audit/
+          retention-days: 90
