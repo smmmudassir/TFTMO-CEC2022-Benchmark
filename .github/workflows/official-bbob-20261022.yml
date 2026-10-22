@@ -27,6 +27,8 @@ jobs:
         run: |
           set -euo pipefail
           python -u validation/run_official_bbob_zenodo.py 2>&1 | tee official_bbob_run.log
+      - name: Verify complete 2160-row BBOB dataset and manifest
+        run: python validation/verify_official_bbob_results.py
       - name: Upload raw results, manifest and logs (including failure diagnostics)
         if: always()
         uses: actions/upload-artifact@v4
